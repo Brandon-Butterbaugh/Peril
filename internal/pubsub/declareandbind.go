@@ -30,7 +30,6 @@ func DeclareAndBind(
 		log.Printf("Error creating new channel: %s", err)
 		return nil, amqp.Queue{}, err
 	}
-	defer newCh.Close()
 
 	que, err := newCh.QueueDeclare(
 		queueName,

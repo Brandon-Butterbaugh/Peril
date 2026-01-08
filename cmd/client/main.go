@@ -23,21 +23,88 @@ func main() {
 	defer conn.Close()
 	fmt.Println("Peril game client connected to RabbitMQ!")
 
+	// create username
 	fmt.Println("Starting Peril client...")
-	usrname, err := gamelogic.ClientWelcome()
+	username, err := gamelogic.ClientWelcome()
 	if err != nil {
 		log.Fatalf("could not create username: %v", err)
 	}
 
-	_, _, err = pubsub.DeclareAndBind(
+	gameState := gamelogic.NewGameState(username)
+	// subscrube client to pause queue
+	err = pubsub.SubscribeJSON(
 		conn,
 		routing.ExchangePerilDirect,
-		fmt.Sprintf("%s.%s", routing.PauseKey, usrname),
+		fmt.Sprintf("%s.%s", routing.PauseKey, username),
 		routing.PauseKey,
 		1,
+		handlerPause(gameState),
 	)
 	if err != nil {
-		log.Fatalf("could not create queue: %v", err)
+		fmt.Printf("error pausing clients from server: %v\n", err)
+	}
+
+	// subscribe client to army_moves
+	err = pubsub.SubscribeJSON(
+		conn,
+		routing.ExchangePerilTopic,
+		fmt.Sprintf("%s.%s", routing.ArmyMovesPrefix, username),
+		routing.ArmyMovesPrefix+".*",
+		1,
+		handlerMove(gameState),
+	)
+	if err != nil {
+		fmt.Printf("error pausing clients from server: %v\n", err)
+	}
+
+GameLoop:
+	for {
+		inputs := gamelogic.GetInput()
+		if inputs == nil {
+			continue
+		}
+		switch inputs[0] {
+		case "spawn":
+			err = gameState.CommandSpawn(inputs)
+			if err != nil {
+				fmt.Println(err)
+			}
+
+		case "move":
+			// make move locally
+			move, err := gameState.CommandMove(inputs)
+			if err != nil {
+				fmt.Println(err)
+			}
+
+			// create channel for move
+			pubConn, err := conn.Channel()
+			if err != nil {
+				fmt.Println(err)
+			}
+			defer pubConn.Close()
+
+			// publish move
+			err = pubsub.PublishJSON(
+				pubConn,
+				routing.ExchangePerilTopic,
+				fmt.Sprintf("%s.%s", routing.ArmyMovesPrefix, username),
+				move,
+			)
+			fmt.Println("Move published successfully")
+
+		case "status":
+			gameState.CommandStatus()
+		case "help":
+			gamelogic.PrintClientHelp()
+		case "spam":
+			fmt.Println("Spamming not allowed yet!")
+		case "quit":
+			gamelogic.PrintQuit()
+			break GameLoop
+		default:
+			fmt.Println("Unkown Command")
+		}
 	}
 
 	// wait for ctrl+c
