@@ -37,7 +37,9 @@ func DeclareAndBind(
 		queueType == TypeTransient,
 		queueType == TypeTransient,
 		false,
-		nil,
+		amqp.Table{
+			"x-dead-letter-exchange": "peril_dlx",
+		},
 	)
 	if err != nil {
 		log.Printf("Error creating queue: %s", err)
