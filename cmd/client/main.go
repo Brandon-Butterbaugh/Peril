@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
-	"os/signal"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -26,9 +24,8 @@ func main() {
 	// create channel for publishing
 	pubConn, err := conn.Channel()
 	if err != nil {
-		fmt.Println(err)
+		log.Fatalf("could not create channel: %v", err)
 	}
-	defer pubConn.Close()
 
 	// create username
 	fmt.Println("Starting Peril client...")
@@ -42,42 +39,41 @@ func main() {
 	err = pubsub.SubscribeJSON(
 		conn,
 		routing.ExchangePerilDirect,
-		fmt.Sprintf("%s.%s", routing.PauseKey, username),
+		routing.PauseKey+"."+gameState.GetUsername(),
 		routing.PauseKey,
-		1,
+		pubsub.TypeTransient,
 		handlerPause(gameState),
 	)
 	if err != nil {
-		fmt.Printf("error subscribing client to pause queue: %v\n", err)
+		log.Fatalf("error subscribing client to pause queue: %v\n", err)
 	}
 
 	// subscribe client to army_moves
 	err = pubsub.SubscribeJSON(
 		conn,
 		routing.ExchangePerilTopic,
-		fmt.Sprintf("%s.%s", routing.ArmyMovesPrefix, username),
+		routing.ArmyMovesPrefix+"."+gameState.GetUsername(),
 		routing.ArmyMovesPrefix+".*",
-		1,
+		pubsub.TypeTransient,
 		handlerMove(gameState, pubConn),
 	)
 	if err != nil {
-		fmt.Printf("error subscribing client to army_moves: %v\n", err)
+		log.Fatalf("error subscribing client to army_moves: %v\n", err)
 	}
 
 	// subscribe client to war
 	err = pubsub.SubscribeJSON(
 		conn,
 		routing.ExchangePerilTopic,
-		"war",
-		routing.ArmyMovesPrefix+".*",
-		0,
-		handlerWar(gameState),
+		routing.WarRecognitionsPrefix,
+		routing.WarRecognitionsPrefix+".*",
+		pubsub.TypeDurable,
+		handlerWar(gameState, pubConn),
 	)
 	if err != nil {
-		fmt.Printf("error subscribing client to war queue: %v\n", err)
+		log.Fatalf("error subscribing client to war queue: %v\n", err)
 	}
 
-GameLoop:
 	for {
 		inputs := gamelogic.GetInput()
 		if inputs == nil {
@@ -88,6 +84,7 @@ GameLoop:
 			err = gameState.CommandSpawn(inputs)
 			if err != nil {
 				fmt.Println(err)
+				continue
 			}
 
 		case "move":
@@ -95,17 +92,19 @@ GameLoop:
 			move, err := gameState.CommandMove(inputs)
 			if err != nil {
 				fmt.Println(err)
+				continue
 			}
 
 			// publish move
 			err = pubsub.PublishJSON(
 				pubConn,
 				routing.ExchangePerilTopic,
-				fmt.Sprintf("%s.%s", routing.ArmyMovesPrefix, username),
+				routing.ArmyMovesPrefix+"."+move.Player.Username,
 				move,
 			)
 			if err != nil {
 				fmt.Println(err)
+				continue
 			}
 			fmt.Println("Move published successfully")
 
@@ -117,15 +116,9 @@ GameLoop:
 			fmt.Println("Spamming not allowed yet!")
 		case "quit":
 			gamelogic.PrintQuit()
-			break GameLoop
+			return
 		default:
 			fmt.Println("Unkown Command")
 		}
 	}
-
-	// wait for ctrl+c
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt)
-	<-signalChan
-	fmt.Println("RabbitMQ connection closed.")
 }

@@ -23,14 +23,16 @@ func handlerMove(gs *gamelogic.GameState, ch *amqp.Channel) func(gamelogic.ArmyM
 		defer fmt.Print("> ")
 		outcome := gs.HandleMove(move)
 		switch outcome {
-		case gamelogic.MoveOutComeSafe:
+		case gamelogic.MoveOutcomeSamePlayer:
+			return pubsub.Ack
+		case gamelogic.MoveOutcomeSafe:
 			return pubsub.Ack
 
 		case gamelogic.MoveOutcomeMakeWar:
 			err := pubsub.PublishJSON(
 				ch,
 				routing.ExchangePerilTopic,
-				fmt.Sprintf("%s.%s", routing.WarRecognitionsPrefix, gs.GetUsername()),
+				routing.WarRecognitionsPrefix+"."+gs.GetUsername(),
 				gamelogic.RecognitionOfWar{
 					Attacker: move.Player,
 					Defender: gs.GetPlayerSnap(),
@@ -38,20 +40,22 @@ func handlerMove(gs *gamelogic.GameState, ch *amqp.Channel) func(gamelogic.ArmyM
 			)
 			if err != nil {
 				fmt.Println(err)
+				return pubsub.NackRequeue
 			}
-			return pubsub.NackRequeue
+			return pubsub.Ack
 
 		default:
+			fmt.Println("error: unknown move outcome")
 			return pubsub.NackDiscard
 		}
 	}
 	return handlerFunc
 }
 
-func handlerWar(gs *gamelogic.GameState) func(gamelogic.RecognitionOfWar) pubsub.AckType {
+func handlerWar(gs *gamelogic.GameState, ch *amqp.Channel) func(war gamelogic.RecognitionOfWar) pubsub.AckType {
 	handlerFunc := func(war gamelogic.RecognitionOfWar) pubsub.AckType {
 		defer fmt.Print("> ")
-		outcome, _, _ := gs.HandleWar(war)
+		outcome, winner, loser := gs.HandleWar(war)
 		switch outcome {
 		case gamelogic.WarOutcomeNotInvolved:
 			return pubsub.NackRequeue
@@ -60,13 +64,28 @@ func handlerWar(gs *gamelogic.GameState) func(gamelogic.RecognitionOfWar) pubsub
 			return pubsub.NackDiscard
 
 		case gamelogic.WarOutcomeOpponentWon:
-			return pubsub.Ack
+			return pubsub.PublishLog(
+				gs,
+				ch,
+				fmt.Sprintf("%s won a war against %s", winner, loser),
+				war.Attacker.Username,
+			)
 
 		case gamelogic.WarOutcomeYouWon:
-			return pubsub.Ack
+			return pubsub.PublishLog(
+				gs,
+				ch,
+				fmt.Sprintf("%s won a war against %s", winner, loser),
+				war.Attacker.Username,
+			)
 
 		case gamelogic.WarOutcomeDraw:
-			return pubsub.Ack
+			return pubsub.PublishLog(
+				gs,
+				ch,
+				fmt.Sprintf("A war between %s and %s resulted in a draw", winner, loser),
+				war.Attacker.Username,
+			)
 
 		default:
 			fmt.Println("Error handling war")

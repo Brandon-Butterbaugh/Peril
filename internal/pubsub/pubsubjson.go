@@ -29,7 +29,7 @@ func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
 		Body:        dat,
 	}
 
-	ch.PublishWithContext(
+	return ch.PublishWithContext(
 		context.Background(),
 		exchange,
 		key,
@@ -37,8 +37,6 @@ func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
 		false,
 		msg,
 	)
-
-	return nil
 }
 
 func SubscribeJSON[T any](
@@ -62,32 +60,34 @@ func SubscribeJSON[T any](
 	}
 
 	// get channel of Delivery structs
-	newch, err := ch.Consume(queue.Name, "", false, false, false, false, nil)
+	msgs, err := ch.Consume(queue.Name, "", false, false, false, false, nil)
 	if err != nil {
 		return fmt.Errorf("consume: %w", err)
+	}
+
+	// create unmarshaller
+	unmarshaller := func(data []byte) (T, error) {
+		var target T
+		err := json.Unmarshal(data, &target)
+		return target, err
 	}
 
 	// handles messages
 	go func() {
 		defer ch.Close()
-		for data := range newch {
-			var msg T
-			err := json.Unmarshal(data.Body, &msg)
+		for msg := range msgs {
+			target, err := unmarshaller(msg.Body)
 			if err != nil {
-				fmt.Println(err)
+				fmt.Printf("could not unmarshal message: %v\n", err)
 				continue
 			}
-			ack := handler(msg)
-			switch ack {
+			switch handler(target) {
 			case Ack:
-				log.Println("Ack message")
-				data.Ack(false)
-			case NackRequeue:
-				log.Println("NackRequeue message")
-				data.Nack(false, true)
+				msg.Ack(false)
 			case NackDiscard:
-				log.Println("NackDiscard message")
-				data.Nack(false, false)
+				msg.Nack(false, false)
+			case NackRequeue:
+				msg.Nack(false, true)
 			}
 		}
 	}()
