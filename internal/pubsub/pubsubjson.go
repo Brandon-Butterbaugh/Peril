@@ -47,24 +47,6 @@ func SubscribeJSON[T any](
 	queueType SimpleQueueType, // an enum to represent "durable" or "transient"
 	handler func(T) AckType,
 ) error {
-	// make sure the queue exists
-	ch, queue, err := DeclareAndBind(
-		conn,
-		exchange,
-		queueName,
-		key,
-		queueType,
-	)
-	if err != nil {
-		return fmt.Errorf("declareAndBind: %w", err)
-	}
-
-	// get channel of Delivery structs
-	msgs, err := ch.Consume(queue.Name, "", false, false, false, false, nil)
-	if err != nil {
-		return fmt.Errorf("consume: %w", err)
-	}
-
 	// create unmarshaller
 	unmarshaller := func(data []byte) (T, error) {
 		var target T
@@ -72,25 +54,17 @@ func SubscribeJSON[T any](
 		return target, err
 	}
 
-	// handles messages
-	go func() {
-		defer ch.Close()
-		for msg := range msgs {
-			target, err := unmarshaller(msg.Body)
-			if err != nil {
-				fmt.Printf("could not unmarshal message: %v\n", err)
-				continue
-			}
-			switch handler(target) {
-			case Ack:
-				msg.Ack(false)
-			case NackDiscard:
-				msg.Nack(false, false)
-			case NackRequeue:
-				msg.Nack(false, true)
-			}
-		}
-	}()
-
+	// subscribe with json unmarshaller
+	if err := subscribe(
+		conn,
+		exchange,
+		queueName,
+		key,
+		queueType,
+		handler,
+		unmarshaller,
+	); err != nil {
+		return fmt.Errorf("Error subscribing Json: %s", err)
+	}
 	return nil
 }

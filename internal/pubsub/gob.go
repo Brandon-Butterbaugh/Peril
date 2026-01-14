@@ -61,3 +61,35 @@ func PublishGob[T any](ch *amqp.Channel, exchange, key string, val T) error {
 	)
 
 }
+
+func SubscribeGob[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	queueType SimpleQueueType, // an enum to represent "durable" or "transient"
+	handler func(T) AckType,
+) error {
+	// create unmarshaller
+	unmarshaller := func(data []byte) (T, error) {
+		buf := bytes.NewBuffer(data)
+		var target T
+		dec := gob.NewDecoder(buf)
+		err := dec.Decode(&target)
+		return target, err
+	}
+
+	// subscribe with gob decoder
+	if err := subscribe(
+		conn,
+		exchange,
+		queueName,
+		key,
+		queueType,
+		handler,
+		unmarshaller,
+	); err != nil {
+		return fmt.Errorf("Error subscribing Gob log: %s", err)
+	}
+	return nil
+}

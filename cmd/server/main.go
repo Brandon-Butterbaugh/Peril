@@ -35,6 +35,19 @@ func main() {
 		log.Fatalf("could not create exchange: %v", err)
 	}
 
+	// subscribe server to log queue
+	err = pubsub.SubscribeGob(
+		conn,
+		routing.ExchangePerilTopic,
+		routing.GameLogSlug,
+		routing.GameLogSlug+".*",
+		pubsub.TypeDurable,
+		handlerLog(),
+	)
+	if err != nil {
+		log.Fatalf("error subscribing client to war queue: %v\n", err)
+	}
+
 	// server loop
 	gamelogic.PrintServerHelp()
 ServerLoop:
