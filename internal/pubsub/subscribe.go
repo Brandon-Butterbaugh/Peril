@@ -27,6 +27,12 @@ func subscribe[T any](
 		return fmt.Errorf("declareAndBind: %w", err)
 	}
 
+	// set Qos
+	err = ch.Qos(10, 0, false)
+	if err != nil {
+		return fmt.Errorf("Qos: %w", err)
+	}
+
 	// get channel of Delivery structs
 	msgs, err := ch.Consume(queue.Name, "", false, false, false, false, nil)
 	if err != nil {
